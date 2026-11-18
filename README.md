@@ -21,6 +21,8 @@ RustDesk 1.5.3 tabanlı, yalnızca Tailscale üzerinden kişisel uzak masaüstü
 
 GitHub Actions'ta yalnızca elle tetiklenen **Guvenli Baglanti** iş akışı Windows `controller`, Windows `host` ve Android ARM64 paketlerini üretir. Native `PRIVATE_REMOTE_ROLE` ve Flutter `--dart-define=PRIVATE_REMOTE_ROLE` aynı rolle derlenir; eksik/geçersiz rol kontrol istemcisine düşer.
 
+Android Gradle/R8 derlemesinde Java heap üst sınırı 2 GiB'dir; release küçültmesi ve imza doğrulaması açık kalır.
+
 Android release anahtarı `.github/scripts/provision-android-signing.ps1` ile yerel kullanıcıya özel dizinde oluşturulup GitHub'ın şifreli depo sırlarına yüklenir. Anahtar parolası yerelde Windows DPAPI ile korunur; bilgisayar/hesap değişikliğinden önce kurtarılabilir anahtar ve parola yedeği alınmalıdır. Debug imzaya dönüş yoktur.
 
 İmza betiği doğrulanmış GitHub CLI ve Java 17 `keytool` yollarını ister. PKCS12 içindeki anahtar takma adı Java ile doğrulanır; uyarlama mevcut anahtar ve sertifikayı değiştirmeden yapılır.
