@@ -29,6 +29,8 @@ Android release anahtarı `.github/scripts/provision-android-signing.ps1` ile ye
 
 Paketlerle SHA-256 özeti, kaynak commit bilgisi, lisans ve GitHub build provenance sağlanır. Windows Authenticode sertifikası dahil değildir; uygulama imzasızdır. SmartScreen/antivirüs korumasını kapatmayın. İndirilen paketin kaynağını `gh attestation verify <paket> --repo omerbek/guvenli-baglanti` ile ayrıca doğrulayın.
 
+Windows kontrol istemcisinin `00395cdd9f` derlemesinde açılışı ve Tailscale dışı hedef reddi gerçek arayüzde doğrulandı. Bu kontrollerde loopback dışı TCP/UDP dinleyicisi görülmedi; her iki Windows paketinin SHA-256 özeti ve GitHub provenance doğrulaması geçti.
+
 Gerçek ev–işyeri bağlantısı, Windows servis/UAC davranışı ve mobil uyumluluk cihaz testleri gerektirir. Aşağıdaki bölüm orijinal RustDesk projesinin referansıdır; genel sunucu ve ek yetenek açıklamaları bu çatallama için geçerli değildir.
 
 ## Upstream RustDesk reference
