@@ -50,6 +50,15 @@ jobs:
           flutter test test/tailscale_destination_test.dart
           cd ..
           flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart --c-output ./flutter/macos/Runner/bridge_generated.h
+      - name: Type-check changed Flutter surfaces
+        working-directory: flutter
+        run: >-
+          dart analyze --no-fatal-warnings
+          lib/main.dart lib/private_remote.dart
+          lib/common/tailscale_destination.dart lib/common/widgets/private_home_page.dart
+          lib/desktop/pages/desktop_home_page.dart lib/desktop/pages/desktop_tab_page.dart
+          lib/desktop/pages/desktop_setting_page.dart lib/desktop/widgets/tabbar_widget.dart
+          lib/models/server_model.dart
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: private-bridge
@@ -76,6 +85,7 @@ jobs:
     env:
       PRIVATE_REMOTE_ROLE: ${{ matrix.role }}
       VCPKG_DEFAULT_TRIPLET: x64-windows-static
+      VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -115,6 +125,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt
       - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
         with:
           vcpkgDirectory: C:\vcpkg
@@ -211,6 +222,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt
           targets: aarch64-linux-android
       - name: Build the controller native library
         run: |

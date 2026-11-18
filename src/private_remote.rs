@@ -2,6 +2,7 @@ use crate::private_remote_policy;
 use base::message_proto::{message, misc, Message};
 use hbb_common::{
     config::{self, Config},
+    log,
     sha2::{Digest, Sha256},
 };
 
