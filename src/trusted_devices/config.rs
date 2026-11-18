@@ -224,7 +224,13 @@ pub(super) fn change<T>(affected: bool, apply: impl FnOnce() -> ResultType<T>) -
     Ok(result)
 }
 
-pub fn set_options(options: HashMap<String, String>) -> ResultType<()> {
+pub fn set_options(mut options: HashMap<String, String>) -> ResultType<()> {
+    let key = crate::private_remote::PASSWORD_ATTESTATION;
+    options.remove(key);
+    let attestation = Config::get_option(key);
+    if !attestation.is_empty() {
+        options.insert(key.to_owned(), attestation);
+    }
     policy::change_options(effective_options(options.clone()), || {
         Config::set_options(options);
         Ok(())
@@ -232,8 +238,16 @@ pub fn set_options(options: HashMap<String, String>) -> ResultType<()> {
 }
 
 pub fn set_password(value: &str) -> ResultType<bool> {
+    if !value.is_empty() && !crate::private_remote_policy::strong_password(value) {
+        hbb_common::bail!("Permanent password must have at least 20 characters and must not be blank, repetitive or contain control characters");
+    }
     change(changes_password(value), || {
-        Ok(Config::set_permanent_password(value))
+        Config::set_option(crate::private_remote::PASSWORD_ATTESTATION.to_owned(), String::new());
+        let accepted = Config::set_permanent_password(value);
+        if accepted && !value.is_empty() {
+            crate::private_remote::record_password_setup();
+        }
+        Ok(accepted)
     })
 }
 

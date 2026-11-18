@@ -60,3 +60,12 @@ flutter/web/
 /third_party/libdrmtap/
 # Local git worktrees
 .worktrees/
+
+# Local credentials and release signing material must never be published.
+/github.txt
+*.p12
+*.jks
+*.keystore
+*.pfx
+*.secrets.clixml
+/dist/

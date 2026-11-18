@@ -1,0 +1,26 @@
+{
+  "tagOwners": {
+    "tag:guvenli-ev": ["autogroup:admin"],
+    "tag:guvenli-kontrol": ["autogroup:admin"]
+  },
+  "grants": [
+    {
+      "src": ["tag:guvenli-kontrol"],
+      "dst": ["tag:guvenli-ev"],
+      "ip": ["tcp:21118"]
+    }
+  ],
+  "tests": [
+    {
+      "src": "tag:guvenli-kontrol",
+      "proto": "tcp",
+      "accept": ["tag:guvenli-ev:21118"],
+      "deny": ["tag:guvenli-ev:22", "tag:guvenli-ev:3389"]
+    },
+    {
+      "src": "tag:guvenli-ev",
+      "proto": "tcp",
+      "deny": ["tag:guvenli-kontrol:21118", "tag:guvenli-kontrol:3389"]
+    }
+  ]
+}

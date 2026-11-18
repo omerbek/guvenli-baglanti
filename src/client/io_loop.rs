@@ -755,6 +755,10 @@ impl<T: InvokeUiSession> Remote<T> {
     }
 
     async fn handle_msg_from_ui(&mut self, data: Data, peer: &mut Stream) -> bool {
+        if matches!(&data, Data::NewVoiceCall | Data::ElevateDirect | Data::ElevateWithLogon(..)) {
+            self.handler.on_error(crate::private_remote_policy::SESSION_ERROR);
+            return true;
+        }
         match data {
             Data::Close => {
                 self.send_close_reason(peer, "").await;
@@ -798,6 +802,10 @@ impl<T: InvokeUiSession> Remote<T> {
                 }
             }
             Data::Message(msg) => {
+                if !crate::private_remote::desktop_message_allowed(&msg) {
+                    self.handler.on_error(crate::private_remote_policy::SESSION_ERROR);
+                    return true;
+                }
                 let msg = self.trusted_device.outgoing(msg);
                 // The Flutter clipboard broadcast is process-wide, so a clipboard can reach this
                 // round's queue before the round has logged in; it is dropped here, on the round
@@ -1695,6 +1703,10 @@ impl<T: InvokeUiSession> Remote<T> {
 
     async fn handle_msg_from_peer(&mut self, data: &[u8], peer: &mut Stream) -> bool {
         if let Ok(msg_in) = Message::parse_from_bytes(&data) {
+            if !crate::private_remote::desktop_message_allowed(&msg_in) {
+                self.handler.on_error(crate::private_remote_policy::SESSION_ERROR);
+                return false;
+            }
             match msg_in.union {
                 Some(message::Union::VideoFrame(vf)) => {
                     if !self.first_frame {

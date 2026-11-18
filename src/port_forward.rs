@@ -81,6 +81,9 @@ pub async fn listen(
     remote_host: String,
     remote_port: i32,
 ) -> ResultType<()> {
+    if crate::private_remote::PUBLIC_NETWORK_DISABLED {
+        hbb_common::bail!(crate::private_remote_policy::SESSION_ERROR);
+    }
     let listener = tcp::new_listener(format!("127.0.0.1:{}", port), true).await?;
     let addr = listener.local_addr()?;
     log::info!("listening on port {:?}", addr);

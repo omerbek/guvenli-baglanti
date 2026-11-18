@@ -121,6 +121,7 @@ impl Drop for SimpleCallOnReturn {
 }
 
 pub fn global_init() -> bool {
+    crate::private_remote::install_settings();
     #[cfg(all(target_os = "linux", feature = "drm"))]
     crate::platform::linux::dispatch_wayland_display_probe();
     #[cfg(target_os = "linux")]
@@ -693,6 +694,9 @@ impl Drop for CheckTestNatType {
 }
 
 pub fn test_nat_type() {
+    if crate::private_remote::PUBLIC_NETWORK_DISABLED {
+        return;
+    }
     test_ipv6_sync();
     use std::sync::atomic::{AtomicBool, Ordering};
     std::thread::spawn(move || {
@@ -870,6 +874,9 @@ async fn test_rendezvous_server_() {
 }
 
 pub fn test_rendezvous_server() {
+    if crate::private_remote::PUBLIC_NETWORK_DISABLED {
+        return;
+    }
     std::thread::spawn(test_rendezvous_server_);
 }
 
@@ -1058,6 +1065,9 @@ pub fn is_modifier(evt: &KeyEvent) -> bool {
 }
 
 pub fn check_software_update() {
+    if crate::private_remote::PUBLIC_NETWORK_DISABLED {
+        return;
+    }
     if is_custom_client() {
         return;
     }
@@ -1177,6 +1187,9 @@ fn process_software_update_check_response(bytes: Bytes) -> ResultType<()> {
 // Because the url is always `https://api.rustdesk.com/version/latest`.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
+    if crate::private_remote::PUBLIC_NETWORK_DISABLED {
+        bail!("Upstream updates are disabled; install a reviewed GuvenliBaglanti release");
+    }
     let (request, url) =
         hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
     let proxy_conf = Config::get_socks();
@@ -1268,6 +1281,9 @@ pub fn get_custom_rendezvous_server(custom: String) -> String {
 
 #[inline]
 pub fn get_api_server(api: String, custom: String) -> String {
+    if crate::private_remote::PUBLIC_NETWORK_DISABLED {
+        return String::new();
+    }
     if Config::no_register_device() {
         return "".to_owned();
     }
@@ -1680,6 +1696,9 @@ where
 /// - 4xx responses are returned as-is (server is reachable, business logic error).
 /// - If fallback also fails, returns the original HTTP result (text or error).
 pub async fn post_request(url: String, body: String, header: &str) -> ResultType<String> {
+    if crate::private_remote::PUBLIC_NETWORK_DISABLED {
+        bail!("Account, synchronization and public HTTP requests are disabled in this private-only build");
+    }
     with_tcp_proxy_fallback(
         &url,
         "POST",
@@ -1714,6 +1733,9 @@ pub async fn post_request_with_status(
     body: String,
     header: &str,
 ) -> ResultType<(u16, String)> {
+    if crate::private_remote::PUBLIC_NETWORK_DISABLED {
+        bail!("Account, synchronization and public HTTP requests are disabled in this private-only build");
+    }
     if should_use_raw_tcp_for_api(&url) {
         return post_request_via_tcp_proxy_status(&url, &body, header).await;
     }
@@ -2005,6 +2027,9 @@ pub async fn http_request_sync(
     body: Option<String>,
     header: String,
 ) -> ResultType<String> {
+    if crate::private_remote::PUBLIC_NETWORK_DISABLED {
+        bail!("Account, synchronization and public HTTP requests are disabled in this private-only build");
+    }
     with_tcp_proxy_fallback(
         &url,
         &method,
@@ -2605,6 +2630,7 @@ pub fn get_dst_align_rgba() -> usize {
 }
 
 pub fn read_custom_client(config: &str) {
+    let _policy = crate::private_remote::RestoreSettings;
     let Ok(data) = decode64(config) else {
         log::error!("Failed to decode custom client config");
         return;
@@ -2800,6 +2826,9 @@ async fn test_bind_ipv6() -> ResultType<SocketAddr> {
 }
 
 pub async fn test_ipv6() -> Option<tokio::task::JoinHandle<()>> {
+    if crate::private_remote::PUBLIC_NETWORK_DISABLED {
+        return None;
+    }
     {
         // One look and one claim of the minute, under one lock: two connections arriving
         // together would otherwise both find it over and both probe.
@@ -3077,7 +3106,7 @@ pub fn get_control_permission(
 }
 
 pub fn is_direct_ip_access(peer: &str) -> bool {
-    hbb_common::is_ip_str(peer) || hbb_common::is_domain_port_str(peer)
+    crate::private_remote_policy::destination(peer).is_ok()
 }
 
 // Align the maximum length of the peer id to the maximum length of the peer id in the server.

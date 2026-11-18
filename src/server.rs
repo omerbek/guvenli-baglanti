@@ -187,6 +187,9 @@ async fn accept_connection_(
     slot: crate::rendezvous_mediator::PunchSlot,
 ) -> ResultType<()> {
     let local_addr = socket.local_addr();
+    if crate::private_remote::PUBLIC_NETWORK_DISABLED {
+        bail!("NAT-punched listeners are disabled; only the Tailscale direct listener is permitted");
+    }
     drop(socket);
     // even we drop socket, below still may fail if not use reuse_addr,
     // there is TIME_WAIT before socket really released, so sometimes we
@@ -217,6 +220,12 @@ pub async fn create_tcp_connection(
     secure: bool,
     meta: ConnectionMeta,
 ) -> ResultType<()> {
+    if !crate::private_remote_policy::admission(
+        crate::private_remote::is_host(), stream.local_addr(), addr,
+        crate::private_remote::host_ready(),
+    ) {
+        bail!(crate::private_remote_policy::SETUP_ERROR);
+    }
     let mut stream = stream;
     // The address the connection layer keys on, whitelist and admission alike.
     let addr = hbb_common::try_into_v4(addr);
@@ -404,6 +413,9 @@ async fn create_relay_connection_(
     ipv4: bool,
     meta: ConnectionMeta,
 ) -> ResultType<()> {
+    if crate::private_remote::PUBLIC_NETWORK_DISABLED {
+        bail!("Relay connections are disabled; use a literal Tailscale IP address");
+    }
     // The proxy's address family does not constrain the relay target.
     let relay_server = crate::check_port(relay_server, RELAY_PORT);
     let use_ws_proxy = Config::is_proxy() && is_ws_endpoint(&check_ws(&relay_server));
@@ -648,6 +660,10 @@ pub fn check_zombie() {
 #[cfg(any(target_os = "android", target_os = "ios"))]
 #[tokio::main]
 pub async fn start_server(_is_server: bool) {
+    crate::private_remote::install_settings();
+    if !crate::private_remote::is_host() {
+        return;
+    }
     allow_err!(crate::trusted_devices::initialize());
     crate::RendezvousMediator::start_all().await;
 }
@@ -663,6 +679,7 @@ pub async fn start_server(_is_server: bool) {
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tokio::main]
 pub async fn start_server(is_server: bool, no_server: bool) {
+    crate::private_remote::install_settings();
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -705,6 +722,11 @@ pub async fn start_server(is_server: bool, no_server: bool) {
                     std::process::exit(-1);
                 }
             });
+        }
+        if !crate::private_remote::is_host() {
+            // Keep the local IPC runtime alive, without starting host services.
+            std::future::pending::<()>().await;
+            return;
         }
         // Warm the DRM availability cache before any client connects, so the first connection does
         // not race a cold `_drm` probe and ship an empty display list ("No displays" + retry).

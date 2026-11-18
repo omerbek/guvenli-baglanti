@@ -18,6 +18,7 @@ fn main() {
 
 #[cfg(not(any(target_os = "android", target_os = "ios", feature = "flutter")))]
 fn main() -> std::process::ExitCode {
+    private_remote::install_settings();
     #[cfg(windows)]
     if let Some(exit_code) = platform::handle_service_control() {
         return exit_code;

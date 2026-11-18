@@ -1,3 +1,32 @@
+# Güvenli Bağlantı
+
+RustDesk 1.5.3 tabanlı, yalnızca Tailscale üzerinden kişisel uzak masaüstü erişimi için hazırlanmış AGPL-3.0 çatallaması. Bağımsız güvenlik denetimi yapılmış bir ürün değildir.
+
+## Kullanım ve güvenlik sınırları
+
+- Evdeki Windows bilgisayarında `host`, iş bilgisayarında `controller` paketi kullanılır. Android APK her zaman kontrol istemcisidir; HarmonyOS uyumluluğu gerçek cihazda denenmelidir.
+- Her iki cihazda Tailscale kurulmuş, oturum açılmış ve cihazlar onaylanmış olmalıdır. Hesapta tercihen geçiş anahtarı/donanım anahtarıyla MFA kullanın.
+- Host yalnızca Windows'taki `Tailscale Tunnel` bağdaştırıcısının Tailscale adreslerinde TCP 21118 dinler. Normal ağ arayüzünde aynı IP aralığının bulunması yeterli değildir.
+- Host, bu sürümde yeni belirlenmiş en az 20 karakterli benzersiz kalıcı parola ve doğrulanmış RustDesk 2FA olmadan bağlantı kabul etmez. Mevcut/import edilmiş parolalar yeniden ayarlanmalıdır.
+- Kontrol istemcileri gelen ekran kontrolünü kabul etmez. Genel RustDesk kimlikleri, DNS hedefleri, aktarıcılar, yerel ağ keşfi ve taraf değiştirme kapalıdır.
+- Pano, dosya aktarımı, terminal, TCP tüneli, kamera, ses ve uzaktan ayar değiştirme kapalıdır. Ekran/klavye/fare erişimi açıktır; yetkili oturum kapanınca ev bilgisayarı kilitlenir.
+- Ağ şifrelemesini Tailscale sağlar; RustDesk'in doğrudan taşıması için ayrıca uçtan uca şifreleme iddia edilmez. TCP 21118 veya RDP portlarını modemde internete açmayın.
+- `security/tailnet-policy.json`, ayrı bir kişisel tailnet için yalnızca `tag:guvenli-kontrol` cihazlarından `tag:guvenli-ev` cihazlarına TCP 21118 izni verir. Mevcut ağ politikanızı otomatik değiştirmez; uygulanmadan etkin değildir. Başka izinlerle birleştiğinde daha geniş erişim doğabileceğini kontrol edin.
+- Etiketleri yalnızca yönetici atamalıdır. Cihaz onayını, cihaz anahtarı son kullanma sürelerini ve kayıp cihazı iptal etme yöntemini Tailscale yönetiminde ayrıca yapılandırın.
+- Otomatik upstream güncelleme kapalıdır: orijinal RustDesk paketi bu güvenlik politikasını korumaz. Güvenlik yamaları bu çatala düzenli taşınmalıdır.
+
+## Paket üretimi
+
+GitHub Actions'ta yalnızca elle tetiklenen **Guvenli Baglanti** iş akışı Windows `controller`, Windows `host` ve Android ARM64 paketlerini üretir. Native `PRIVATE_REMOTE_ROLE` ve Flutter `--dart-define=PRIVATE_REMOTE_ROLE` aynı rolle derlenir; eksik/geçersiz rol kontrol istemcisine düşer.
+
+Android release anahtarı `.github/scripts/provision-android-signing.ps1` ile yerel kullanıcıya özel dizinde oluşturulup GitHub'ın şifreli depo sırlarına yüklenir. Anahtar parolası yerelde Windows DPAPI ile korunur; bilgisayar/hesap değişikliğinden önce kurtarılabilir anahtar ve parola yedeği alınmalıdır. Debug imzaya dönüş yoktur.
+
+Paketlerle SHA-256 özeti, kaynak commit bilgisi, lisans ve GitHub build provenance sağlanır. Windows Authenticode sertifikası dahil değildir; uygulama imzasızdır. SmartScreen/antivirüs korumasını kapatmayın. İndirilen paketin kaynağını `gh attestation verify <paket> --repo omerbek/guvenli-baglanti` ile ayrıca doğrulayın.
+
+Gerçek ev–işyeri bağlantısı, Windows servis/UAC davranışı ve mobil uyumluluk cihaz testleri gerektirir. Aşağıdaki bölüm orijinal RustDesk projesinin referansıdır; genel sunucu ve ek yetenek açıklamaları bu çatallama için geçerli değildir.
+
+## Upstream RustDesk reference
+
 <p align="center">
   <img src="res/logo-header.svg" alt="RustDesk - Your remote desktop"><br>
   <a href="#raw-steps-to-build">Build</a> •

@@ -1,0 +1,260 @@
+name: Guvenli Baglanti
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: '1.75'
+  FLUTTER_VERSION: '3.24.5'
+  VCPKG_COMMIT_ID: '9e593bb18ea69cc5095e012465dcd675a822ed0d'
+  CARGO_NDK_VERSION: '3.1.2'
+
+jobs:
+  bridge:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install bridge prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake g++ libclang-dev libgtk-3-dev llvm-dev nasm ninja-build pkg-config
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      - name: Test fail-closed native admission policy
+        run: |
+          rustc --edition=2021 --test src/private_remote_policy.rs -o "$RUNNER_TEMP/private_remote_policy_tests"
+          "$RUNNER_TEMP/private_remote_policy_tests"
+      - name: Generate the existing native bridge
+        run: |
+          cargo install cargo-expand --version 1.0.95 --locked
+          cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid --locked
+          cd flutter
+          flutter pub get
+          flutter test test/tailscale_destination_test.dart
+          cd ..
+          flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart --c-output ./flutter/macos/Runner/bridge_generated.h
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: private-bridge
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            src/bridge_generated.rs
+            src/bridge_generated.io.rs
+            flutter/lib/generated_bridge.dart
+            flutter/lib/generated_bridge.freezed.dart
+
+  windows:
+    needs: bridge
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    runs-on: windows-2022
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        role: [controller, host]
+    env:
+      PRIVATE_REMOTE_ROLE: ${{ matrix.role }}
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: private-bridge
+          path: ./
+      - uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432c68818ab8f0
+        with:
+          version: '15.0.6'
+      - uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225
+        id: flutter
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      - name: Install the checksum-pinned upstream Windows engine
+        shell: pwsh
+        env:
+          FLUTTER_SDK: ${{ steps.flutter.outputs.CACHE-PATH }}
+        run: |
+          flutter precache --windows
+          $archive = Join-Path $env:RUNNER_TEMP 'windows-engine.zip'
+          Invoke-WebRequest 'https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip' -OutFile $archive
+          $expected = 'EC8CABF36EE4FF24C8D98DE25B00E70781EB03876265AEE84D0FE554A110036E'
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -cne $expected) { throw 'Upstream engine checksum changed; refusing execution.' }
+          $expanded = Join-Path $env:RUNNER_TEMP 'windows-engine'
+          Expand-Archive $archive $expanded
+          $engine = Join-Path $env:FLUTTER_SDK 'bin/cache/artifacts/engine/windows-x64-release'
+          Copy-Item "$expanded/*" $engine -Recurse -Force
+      - name: Apply the upstream Flutter compatibility patch
+        shell: bash
+        env:
+          FLUTTER_SDK: ${{ steps.flutter.outputs.CACHE-PATH }}
+        run: git -C "$FLUTTER_SDK" apply "$GITHUB_WORKSPACE/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff"
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+      - name: Build pinned native dependencies
+        shell: bash
+        run: '"$VCPKG_ROOT/vcpkg" install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"'
+      - name: Build the role-specific Windows application
+        shell: pwsh
+        run: |
+          cargo build --locked --release --lib --features flutter,hwcodec
+          if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
+          Push-Location flutter
+          flutter build windows --release "--dart-define=PRIVATE_REMOTE_ROLE=$env:PRIVATE_REMOTE_ROLE"
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter build failed.' }
+          Pop-Location
+          $bundle = 'flutter/build/windows/x64/runner/Release'
+          Copy-Item 'target/release/deps/dylib_virtual_display.dll' $bundle
+          if (!(Test-Path "$bundle/GuvenliBaglanti.exe")) { throw 'Application executable missing.' }
+          Copy-Item LICENCE "$bundle/LICENCE.txt"
+          @("Source: https://github.com/$env:GITHUB_REPOSITORY", "Commit: $env:GITHUB_SHA", "Role: $env:PRIVATE_REMOTE_ROLE", 'Based on RustDesk 1.5.3; AGPL-3.0.', 'Windows Authenticode certificate is not included; this build is unsigned.') | Set-Content "$bundle/BUILD-INFO.txt" -Encoding utf8
+          New-Item -ItemType Directory -Path dist | Out-Null
+          Compress-Archive "$bundle/*" "dist/GuvenliBaglanti-windows-$env:PRIVATE_REMOTE_ROLE.zip"
+          $file = Get-Item "dist/GuvenliBaglanti-windows-$env:PRIVATE_REMOTE_ROLE.zip"
+          "$((Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($file.Name)" | Set-Content "dist/$($file.Name).sha256" -Encoding ascii
+      - name: Test native private-network admission
+        shell: pwsh
+        run: |
+          cargo test --locked --release --lib --features flutter,hwcodec private_remote
+          if ($LASTEXITCODE -ne 0) { throw 'Security policy tests failed.' }
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        with:
+          subject-path: dist/*.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: GuvenliBaglanti-windows-${{ matrix.role }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  android:
+    needs: bridge
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      PRIVATE_REMOTE_ROLE: controller
+      ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/28.2.13676358
+      ANDROID_NDK_ROOT: /usr/local/lib/android/sdk/ndk/28.2.13676358
+      JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Require a private release signing key
+        env:
+          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+          ANDROID_KEY_STORE_PASSWORD: ${{ secrets.ANDROID_KEY_STORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_ALIAS: ${{ secrets.ANDROID_ALIAS }}
+        run: |
+          for variable in ANDROID_SIGNING_KEY ANDROID_KEY_STORE_PASSWORD ANDROID_KEY_PASSWORD ANDROID_ALIAS; do
+            if [[ -z "${!variable}" ]]; then echo "::error::Missing release signing secret: $variable"; exit 1; fi
+          done
+      - name: Install native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake gcc-multilib g++-multilib libayatana-appindicator3-dev libasound2-dev libclang-dev libunwind-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgtk-3-dev libpulse-dev libva-dev libxcb-randr0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev libxfixes-dev llvm-dev nasm ninja-build openjdk-17-jdk-headless pkg-config
+          echo '/usr/lib/jvm/java-17-openjdk-amd64/bin' >> "$GITHUB_PATH"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
+      - uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225
+        id: flutter
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      - name: Apply the upstream Flutter compatibility patch
+        env:
+          FLUTTER_SDK: ${{ steps.flutter.outputs.CACHE-PATH }}
+        run: git -C "$FLUTTER_SDK" apply "$GITHUB_WORKSPACE/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff"
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+        with:
+          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+      - name: Build pinned Android native dependencies
+        run: ./flutter/build_android_deps.sh arm64-v8a
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: private-bridge
+          path: ./
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-linux-android
+      - name: Build the controller native library
+        run: |
+          cargo install cargo-ndk --version "$CARGO_NDK_VERSION" --locked
+          ./flutter/ndk_arm64.sh
+          destination=flutter/android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p "$destination"
+          cp target/aarch64-linux-android/release/liblibrustdesk.so "$destination/librustdesk.so"
+          cp "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$destination/"
+      - name: Build and verify a privately signed release APK
+        env:
+          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+          ANDROID_KEY_STORE_PASSWORD: ${{ secrets.ANDROID_KEY_STORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_ALIAS: ${{ secrets.ANDROID_ALIAS }}
+          EXPECTED_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          umask 077
+          keyfile="$RUNNER_TEMP/guvenlibaglanti.p12"
+          printf '%s' "$ANDROID_SIGNING_KEY" | base64 --decode > "$keyfile"
+          trap 'rm -f "$keyfile" "$GITHUB_WORKSPACE/flutter/android/key.properties"' EXIT
+          printf 'storeFile=%s\nstorePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreType=PKCS12\n' "$keyfile" "$ANDROID_KEY_STORE_PASSWORD" "$ANDROID_KEY_PASSWORD" "$ANDROID_ALIAS" > flutter/android/key.properties
+          keytool -list -keystore "$keyfile" -storetype PKCS12 -storepass:env ANDROID_KEY_STORE_PASSWORD -alias "$ANDROID_ALIAS" > /dev/null
+          cd flutter
+          flutter build apk --release --target-platform android-arm64 --split-per-abi --dart-define=PRIVATE_REMOTE_ROLE=controller --build-name=1.5.3 "--build-number=$GITHUB_RUN_NUMBER"
+          cd ..
+          mkdir dist
+          cp flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/GuvenliBaglanti-android-arm64.apk
+          verification=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs dist/GuvenliBaglanti-android-arm64.apk)
+          printf '%s\n' "$verification"
+          actual=$(printf '%s\n' "$verification" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          if [[ -z "$EXPECTED_CERT_SHA256" || "${actual,,}" != "${EXPECTED_CERT_SHA256,,}" ]]; then
+            echo '::error::APK signer does not match the provisioned release certificate.'
+            exit 1
+          fi
+          cp LICENCE dist/LICENCE.txt
+          printf 'Source: https://github.com/%s\nCommit: %s\nRole: controller\nBased on RustDesk 1.5.3; AGPL-3.0.\nARM64 Android APK; HarmonyOS compatibility requires a device test.\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" > dist/BUILD-INFO.txt
+          cd dist
+          sha256sum GuvenliBaglanti-android-arm64.apk > GuvenliBaglanti-android-arm64.apk.sha256
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        with:
+          subject-path: dist/*.apk
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: GuvenliBaglanti-android-arm64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14

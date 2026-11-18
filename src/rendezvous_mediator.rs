@@ -310,85 +310,11 @@ impl RendezvousMediator {
     }
 
     pub async fn start_all() {
-        crate::test_nat_type();
-        if config::is_outgoing_only() {
-            loop {
-                sleep(1.).await;
-            }
-        }
-        crate::hbbs_http::sync::start();
-        #[cfg(target_os = "windows")]
-        if crate::platform::is_installed() && crate::is_server() {
-            crate::updater::start_auto_update();
+        if !crate::private_remote::is_host() {
+            return;
         }
         check_zombie();
-        let server = new_server();
-        if config::option2bool("stop-service", &Config::get_option("stop-service")) {
-            crate::test_rendezvous_server();
-        }
-        let server_cloned = server.clone();
-        tokio::spawn(async move {
-            direct_server(server_cloned).await;
-        });
-        #[cfg(target_os = "android")]
-        let start_lan_listening = true;
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        let start_lan_listening = crate::platform::is_installed();
-        if start_lan_listening {
-            std::thread::spawn(move || {
-                allow_err!(super::lan::start_listening());
-            });
-        }
-        scrap::codec::test_av1();
-        *LAST_NOT_DEPLOYED_REGISTER.lock().await = None;
-        loop {
-            let timeout = Arc::new(RwLock::new(CONNECT_TIMEOUT));
-            let conn_start_time = Instant::now();
-            *SOLVING_PK_MISMATCH.lock().await = "".to_owned();
-            if !config::option2bool("stop-service", &Config::get_option("stop-service"))
-                && !crate::platform::installing_service()
-            {
-                let mut futs = Vec::new();
-                let servers = Config::get_rendezvous_servers();
-                SHOULD_EXIT.store(false, Ordering::SeqCst);
-                MANUAL_RESTARTED.store(false, Ordering::SeqCst);
-                for host in servers.clone() {
-                    let server = server.clone();
-                    let timeout = timeout.clone();
-                    futs.push(tokio::spawn(async move {
-                        if let Err(err) = Self::start(server, host).await {
-                            let err = format!("rendezvous mediator error: {err}");
-                            // When user reboot, there might be below error, waiting too long
-                            // (CONNECT_TIMEOUT 18s) will make user think there is bug
-                            if err.contains("10054") || err.contains("11001") {
-                                // No such host is known. (os error 11001)
-                                // An existing connection was forcibly closed by the remote host. (os error 10054): also happens for UDP
-                                *timeout.write().unwrap() = 3000;
-                            }
-                            log::error!("{err}");
-                        }
-                        // SHOULD_EXIT here is to ensure once one exits, the others also exit.
-                        SHOULD_EXIT.store(true, Ordering::SeqCst);
-                    }));
-                }
-                join_all(futs).await;
-            } else {
-                server.write().unwrap().close_connections();
-            }
-            Config::reset_online();
-            let timeout = *timeout.read().unwrap();
-            // Subscribe before checking the flag so a restart cannot miss the wait.
-            let restarted = MANUAL_RESTART_NOTIFY.notified();
-            if !MANUAL_RESTARTED.load(Ordering::SeqCst) {
-                let elapsed = conn_start_time.elapsed().as_millis() as u64;
-                if elapsed < timeout {
-                    wait_for_retry(((timeout - elapsed) / 1000) as _, restarted).await;
-                }
-            } else {
-                // https://github.com/rustdesk/rustdesk/issues/12233
-                sleep(0.033).await;
-            }
-        }
+        crate::private_remote::run_host(new_server()).await;
     }
 
     fn get_host_prefix(host: &str) -> String {
@@ -1390,83 +1316,6 @@ impl RendezvousMediator {
     }
 }
 
-fn get_direct_port() -> i32 {
-    let mut port = Config::get_option("direct-access-port")
-        .parse::<i32>()
-        .unwrap_or(0);
-    if port <= 0 {
-        port = RENDEZVOUS_PORT + 2;
-    }
-    port
-}
-
-async fn direct_server(server: ServerPtr) {
-    let mut listener = None;
-    let mut port = 0;
-    loop {
-        let disabled = !option2bool(
-            OPTION_DIRECT_SERVER,
-            &Config::get_option(OPTION_DIRECT_SERVER),
-        ) || option2bool("stop-service", &Config::get_option("stop-service"));
-        if !disabled && listener.is_none() {
-            port = get_direct_port();
-            match hbb_common::tcp::listen_any(port as _).await {
-                Ok(l) => {
-                    listener = Some(l);
-                    log::info!(
-                        "Direct server listening on: {:?}",
-                        listener.as_ref().map(|l| l.local_addr())
-                    );
-                }
-                Err(err) => {
-                    // to-do: pass to ui
-                    log::error!(
-                        "Failed to start direct server on port: {}, error: {}",
-                        port,
-                        err
-                    );
-                    loop {
-                        if port != get_direct_port() {
-                            break;
-                        }
-                        sleep(1.).await;
-                    }
-                }
-            }
-        }
-        if let Some(l) = listener.as_mut() {
-            if disabled || port != get_direct_port() {
-                log::info!("Exit direct access listen");
-                listener = None;
-                continue;
-            }
-            if let Ok(Ok((stream, addr))) = hbb_common::timeout(1000, l.accept()).await {
-                stream.set_nodelay(true).ok();
-                log::info!("direct access from {}", addr);
-                let local_addr = stream
-                    .local_addr()
-                    .unwrap_or(Config::get_any_listen_addr(true));
-                let server = server.clone();
-                tokio::spawn(async move {
-                    allow_err!(
-                        crate::server::create_tcp_connection(
-                            server,
-                            hbb_common::Stream::from(stream, local_addr),
-                            addr,
-                            false,
-                            ConnectionMeta::default(), // Direct connections don't have server-side user context.
-                        )
-                        .await
-                    );
-                });
-            } else {
-                sleep(0.1).await;
-            }
-        } else {
-            sleep(1.).await;
-        }
-    }
-}
 
 enum Sink<'a> {
     Framed(&'a mut FramedSocket, &'a TargetAddr<'a>),

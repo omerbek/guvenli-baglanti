@@ -388,7 +388,6 @@ pub struct Connection {
     control_permissions: Option<ControlPermissions>,
     last_test_delay: Option<Instant>,
     network_delay: u32,
-    lock_after_session_end: bool,
     show_remote_cursor: bool,
     // by peer
     ip: String,
@@ -603,16 +602,15 @@ impl Connection {
             control_permissions,
             last_test_delay: None,
             network_delay: 0,
-            lock_after_session_end: false,
             show_remote_cursor: false,
             follow_remote_cursor: false,
             follow_remote_window: false,
             multi_ui_session: false,
             ip: "".to_owned(),
-            disable_audio: false,
+            disable_audio: true,
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
             enable_file_transfer: false,
-            disable_clipboard: false,
+            disable_clipboard: true,
             disable_keyboard: false,
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             show_my_cursor: false,
@@ -753,15 +751,7 @@ impl Connection {
                 Some(data) = rx_from_cm.recv() => {
                     match data {
                         ipc::Data::Authorize => {
-                            conn.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::Click);
-                            conn.trusted_device = None;
-                            conn.require_2fa.take();
-                            if !conn.send_logon_response_and_keep_alive().await {
-                                break;
-                            }
-                            if conn.port_forward_socket.is_some() {
-                                break;
-                            }
+                            conn.send_login_error("Manual approval is disabled; permanent password and authenticator 2FA are required").await;
                         }
                         ipc::Data::Close => {
                             conn.chat_unanswered = false; // seen
@@ -801,6 +791,9 @@ impl Connection {
                             conn.chat_unanswered = false;
                         }
                         ipc::Data::SwitchPermission{name, enabled} => {
+                            if name != "keyboard" {
+                                continue;
+                            }
                             log::info!("Change permission {} -> {}", name, enabled);
                             if &name == "keyboard" {
                                 conn.keyboard = enabled;
@@ -973,13 +966,12 @@ impl Connection {
                         #[cfg(feature = "flutter")]
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         ipc::Data::SwitchSidesBack => {
-                            let mut misc = Misc::new();
-                            misc.set_switch_back(SwitchBack::default());
-                            let mut msg = Message::new();
-                            msg.set_misc(misc);
-                            conn.send(msg).await;
+                            conn.send_login_error(crate::private_remote_policy::SESSION_ERROR).await;
                         }
                         ipc::Data::VoiceCallResponse(accepted) => {
+                            if accepted {
+                                continue;
+                            }
                             conn.handle_voice_call(accepted).await;
                         }
                         ipc::Data::CloseVoiceCall(_reason) => {
@@ -1850,41 +1842,25 @@ impl Connection {
     // Returns whether this connection should be kept alive.
     // `true` does not necessarily mean authorization succeeded (e.g. REQUIRE_2FA case).
     async fn send_logon_response_and_keep_alive(&mut self) -> bool {
+        if !crate::private_remote::host_ready()
+            || self.conn_audit_primary_auth != ConnAuditPrimaryAuth::PermanentPassword
+            || self.from_switch || self.lr.union.is_some()
+        {
+            self.send_login_error(crate::private_remote_policy::SETUP_ERROR).await;
+            return false;
+        }
         if self.authorized {
             return true;
         }
-        if self.require_2fa.is_some() && !self.is_recent_session(true) && !self.from_switch {
-            self.require_2fa.as_ref().map(|totp| {
-                let bot = crate::auth_2fa::TelegramBot::get();
-                let bot = match bot {
-                    Ok(Some(bot)) => bot,
-                    Err(err) => {
-                        log::error!("Failed to get telegram bot: {}", err);
-                        return;
-                    }
-                    _ => return,
-                };
-                let code = totp.generate_current();
-                if let Ok(code) = code {
-                    let text = format!(
-                        "2FA code: {}\n\nA new connection has been established to your device with ID {}. The source IP address is {}.",
-                        code,
-                        Config::get_id(),
-                        self.ip,
-                    );
-                    tokio::spawn(async move {
-                        if let Err(err) =
-                            crate::auth_2fa::send_2fa_code_to_telegram(&text, bot).await
-                        {
-                            log::error!("Failed to send 2fa code to telegram bot: {}", err);
-                        }
-                    });
-                }
-            });
+        if self.require_2fa.is_some() {
             self.awaiting_2fa = true;
             self.send_login_error(crate::client::REQUIRE_2FA).await;
             // Keep the connection alive so the client can continue with 2FA.
             return true;
+        }
+        if self.conn_audit_two_factor != ConnAuditTwoFactor::Totp {
+            self.send_login_error("Authenticator 2FA is required for every connection").await;
+            return false;
         }
         self.awaiting_2fa = false;
         // The later check also covers revocation while connection setup awaits.
@@ -2619,19 +2595,6 @@ impl Connection {
     }
 
     fn validate_password(&mut self, allow_permanent_password: bool) -> bool {
-        if password::temporary_enabled() {
-            let password = password::temporary_password();
-            if self.validate_password_plain(&password) {
-                self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::TemporaryPassword);
-                raii::AuthedConnID::update_or_insert_session(
-                    self.session_key(),
-                    Some(password),
-                    Some(false),
-                );
-                self.check_update_temporary_password(true);
-                return true;
-            }
-        }
         if password::permanent_enabled() || allow_permanent_password {
             let print_fallback = || {
                 if allow_permanent_password && !password::permanent_enabled() {
@@ -2664,36 +2627,12 @@ impl Connection {
         false
     }
 
-    fn is_recent_session(&mut self, tfa: bool) -> bool {
-        SESSIONS
-            .lock()
-            .unwrap()
-            .retain(|_, s| s.last_recv_time.lock().unwrap().elapsed() < SESSION_TIMEOUT);
-        let session = SESSIONS
-            .lock()
-            .unwrap()
-            .get(&self.session_key())
-            .map(|s| s.to_owned());
-        // last_recv_time is a mutex variable shared with connection, can be updated lively.
-        if let Some(session) = session {
-            if !self.lr.password.is_empty()
-                && (tfa && session.tfa
-                    || !tfa && self.validate_password_plain(&session.random_password))
-            {
-                if tfa {
-                    self.set_conn_audit_two_factor(ConnAuditTwoFactor::Totp);
-                } else {
-                    self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::TemporaryPassword);
-                }
-                log::info!("is recent session");
-                return true;
-            }
-        }
-        false
-    }
 
     #[inline]
     pub fn is_permission_enabled_locally(enable_prefix_option: &str) -> bool {
+        if !crate::private_remote::permission_allowed(enable_prefix_option) {
+            return false;
+        }
         #[cfg(feature = "flutter")]
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
@@ -2714,6 +2653,9 @@ impl Connection {
         enable_prefix_option: &str,
         control_permissions: &Option<ControlPermissions>,
     ) -> bool {
+        if !crate::private_remote::permission_allowed(enable_prefix_option) {
+            return false;
+        }
         use hbb_common::rendezvous_proto::control_permissions::Permission;
         if let Some(control_permissions) = control_permissions {
             let permission = match enable_prefix_option {
@@ -2886,6 +2828,10 @@ impl Connection {
     }
 
     async fn on_message(&mut self, msg: Message) -> bool {
+        if !crate::private_remote::desktop_message_allowed(&msg) {
+            self.send_login_error(crate::private_remote_policy::SESSION_ERROR).await;
+            return false;
+        }
         if let Some(message::Union::Misc(misc)) = &msg.union {
             // Move the CloseReason forward, as this message needs to be received when unauthorized, especially for kcp.
             if let Some(misc::Union::CloseReason(s)) = &misc.union {
@@ -2905,6 +2851,10 @@ impl Connection {
         }
         // After handling CloseReason messages, proceed to process other message types
         if let Some(message::Union::LoginRequest(lr)) = msg.union {
+            if !crate::private_remote::host_ready() {
+                self.send_login_error(crate::private_remote_policy::SETUP_ERROR).await;
+                return false;
+            }
             if !self.check_login_scope(&lr).await {
                 return false;
             }
@@ -3058,11 +3008,6 @@ impl Connection {
                         .await;
                 }
                 return true;
-            } else if self.is_recent_session(false) {
-                if !self.send_logon_response_and_keep_alive().await {
-                    return false;
-                }
-                self.try_start_cm(lr.my_id.clone(), lr.my_name.clone(), self.authorized);
             } else if lr.password.is_empty() {
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 if should_use_terminal_os_login_scope(self.terminal, &lr.os_login.username) {
@@ -4951,11 +4896,6 @@ impl Connection {
         if let Some(q) = o.supported_decoding.clone().take() {
             scrap::codec::Encoder::update(scrap::codec::EncodingUpdate::Update(self.inner.id(), q));
         }
-        if let Ok(q) = o.lock_after_session_end.enum_value() {
-            if q != BoolOption::NotSet {
-                self.lock_after_session_end = q == BoolOption::Yes;
-            }
-        }
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         if let Ok(q) = o.show_remote_cursor.enum_value() {
             if q != BoolOption::NotSet {
@@ -4994,7 +4934,7 @@ impl Connection {
         }
         if let Ok(q) = o.disable_audio.enum_value() {
             if q != BoolOption::NotSet {
-                self.disable_audio = q == BoolOption::Yes;
+                self.disable_audio = true;
                 if let Some(s) = self.server.upgrade() {
                     if self.is_authed_view_camera_conn() {
                         if self.voice_calling || !self.audio_enabled() {
@@ -5017,7 +4957,7 @@ impl Connection {
         #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
         if let Ok(q) = o.enable_file_transfer.enum_value() {
             if q != BoolOption::NotSet {
-                self.enable_file_transfer = q == BoolOption::Yes;
+                self.enable_file_transfer = false;
                 #[cfg(target_os = "windows")]
                 self.send_to_cm(ipc::Data::ClipboardFileEnabled(
                     self.file_transfer_enabled(),
@@ -5038,7 +4978,7 @@ impl Connection {
         }
         if let Ok(q) = o.disable_clipboard.enum_value() {
             if q != BoolOption::NotSet {
-                self.disable_clipboard = q == BoolOption::Yes;
+                self.disable_clipboard = true;
                 if let Some(s) = self.server.upgrade() {
                     s.write().unwrap().subscribe(
                         super::clipboard_service::NAME,
@@ -5317,11 +5257,7 @@ impl Connection {
         // But it's not necessary now and we have to consider two audio services(client, server).
         crate::audio_service::set_voice_call_input_device(None, true);
         log::info!("#{} Connection closed: {}", self.inner.id(), reason);
-        if lock
-            && self.lock_after_session_end
-            && self.keyboard
-            && !raii::AuthedConnID::session_reconnected(self.inner.id(), &self.session_key())
-        {
+        if self.authorized && self.is_remote() {
             #[cfg(target_os = "macos")]
             privacy_mode::macos::turn_off_before_lock(self.inner.id());
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
