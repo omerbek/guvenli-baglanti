@@ -23,6 +23,15 @@ pub fn tailscale_interface(description: Option<&str>) -> bool {
     description.map_or(false, |value| value.eq_ignore_ascii_case("Tailscale Tunnel"))
 }
 
+pub fn controller_interface(name: &str, description: Option<&str>, windows: bool, android: bool) -> bool {
+    if windows {
+        return tailscale_interface(description);
+    }
+    android && name.strip_prefix("tun").map_or(false, |suffix| {
+        !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+    })
+}
+
 pub fn destination(value: &str) -> Result<SocketAddr, &'static str> {
     let addr = if let Ok(ip) = value.parse::<IpAddr>() {
         SocketAddr::new(ip, DIRECT_PORT)
@@ -96,6 +105,18 @@ mod tests {
         for value in ["", "nineteen-characters", "                    ", "aaaaaaaaaaaaaaaaaaaa", "long test passphrase\n123!"] {
             assert!(!strong_password(value));
         }
+    }
+
+    #[test]
+    fn controllers_reject_carrier_and_physical_interfaces() {
+        assert!(controller_interface("adapter", Some("Tailscale Tunnel"), true, false));
+        assert!(!controller_interface("Ethernet", Some("Ethernet"), true, false));
+        assert!(controller_interface("tun0", None, false, true));
+        assert!(controller_interface("tun12", None, false, true));
+        assert!(!controller_interface("rmnet_data0", None, false, true));
+        assert!(!controller_interface("wlan0", None, false, true));
+        assert!(!controller_interface("tun", None, false, true));
+        assert!(!controller_interface("tun0", None, false, false));
     }
 
     #[test]

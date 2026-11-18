@@ -453,7 +453,7 @@ impl Client {
             .map_err(|error| anyhow!(error))?;
         let stream = timeout(CONNECT_TIMEOUT, tokio::net::TcpStream::connect(address)).await??;
         let local = stream.local_addr()?;
-        if !crate::private_remote_policy::tailscale_ip(local.ip()) {
+        if !crate::private_remote::controller_connection_is_private(local.ip()) {
             bail!("Connection did not use a Tailscale interface");
         }
         stream.set_nodelay(true)?;

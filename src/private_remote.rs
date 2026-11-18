@@ -110,6 +110,21 @@ pub fn host_ready() -> bool {
     )
 }
 
+pub fn controller_connection_is_private(local: std::net::IpAddr) -> bool {
+    if !private_remote_policy::tailscale_ip(local) {
+        return false;
+    }
+    default_net::get_interfaces().iter().any(|interface| {
+        private_remote_policy::controller_interface(
+            &interface.name, interface.description.as_deref(),
+            cfg!(target_os = "windows"), cfg!(target_os = "android"),
+        ) && match local {
+            std::net::IpAddr::V4(ip) => interface.ipv4.iter().any(|network| network.addr == ip),
+            std::net::IpAddr::V6(ip) => interface.ipv6.iter().any(|network| network.addr == ip),
+        }
+    })
+}
+
 pub fn permission_allowed(key: &str) -> bool {
     key == "enable-keyboard"
 }

@@ -7,6 +7,7 @@ RustDesk 1.5.3 tabanlı, yalnızca Tailscale üzerinden kişisel uzak masaüstü
 - Evdeki Windows bilgisayarında `host`, iş bilgisayarında `controller` paketi kullanılır. Android APK her zaman kontrol istemcisidir; HarmonyOS uyumluluğu gerçek cihazda denenmelidir.
 - Her iki cihazda Tailscale kurulmuş, oturum açılmış ve cihazlar onaylanmış olmalıdır. Hesapta tercihen geçiş anahtarı/donanım anahtarıyla MFA kullanın.
 - Host yalnızca Windows'taki `Tailscale Tunnel` bağdaştırıcısının Tailscale adreslerinde TCP 21118 dinler. Normal ağ arayüzünde aynı IP aralığının bulunması yeterli değildir.
+- Kontrol istemcisi, kimlik doğrulama verisi göndermeden önce yerel çıkış adresinin de gerçek tünel bağdaştırıcısına ait olduğunu denetler. Mobil operatörün CGNAT adres aralığı tek başına özel ağ kanıtı sayılmaz.
 - Host, bu sürümde yeni belirlenmiş en az 20 karakterli benzersiz kalıcı parola ve doğrulanmış RustDesk 2FA olmadan bağlantı kabul etmez. Mevcut/import edilmiş parolalar yeniden ayarlanmalıdır.
 - Kontrol istemcileri gelen ekran kontrolünü kabul etmez. Genel RustDesk kimlikleri, DNS hedefleri, aktarıcılar, yerel ağ keşfi ve taraf değiştirme kapalıdır.
 - Pano, dosya aktarımı, terminal, TCP tüneli, kamera, ses ve uzaktan ayar değiştirme kapalıdır. Ekran/klavye/fare erişimi açıktır; yetkili oturum kapanınca ev bilgisayarı kilitlenir.
