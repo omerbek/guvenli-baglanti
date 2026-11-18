@@ -4,12 +4,15 @@ param(
     [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')]
     [string]$Repository,
     [Parameter(Mandatory = $true)]
-    [string]$GitHubCli
+    [string]$GitHubCli,
+    [Parameter(Mandatory = $true)]
+    [string]$KeyTool
 )
 
 $ErrorActionPreference = 'Stop'
 if (!$env:GH_TOKEN) { throw 'Provide GitHub authentication in the process environment, not a command-line argument.' }
 if (!(Test-Path -LiteralPath $GitHubCli -PathType Leaf)) { throw 'Verified GitHub CLI executable was not found.' }
+if (!(Test-Path -LiteralPath $KeyTool -PathType Leaf)) { throw 'Verified Java keytool executable was not found.' }
 
 function Send-GitHubValue {
     param([string]$Kind, [string]$Name, [string]$Value)
@@ -85,6 +88,21 @@ try {
     $sha256 = [Security.Cryptography.SHA256]::Create()
     try { $fingerprint = ([BitConverter]::ToString($sha256.ComputeHash($certificate.RawData))).Replace('-', '').ToLowerInvariant() }
     finally { $sha256.Dispose() }
+    $env:GB_SIGNING_PASSWORD = $password
+    try {
+        $entries = & $KeyTool '-J-Duser.language=en' '-J-Duser.country=US' -list -v -keystore $keyFile -storetype PKCS12 -storepass:env GB_SIGNING_PASSWORD
+        if ($LASTEXITCODE -ne 0) { throw 'Java could not validate the release keystore.' }
+        $aliases = @($entries | ForEach-Object { if ($_ -match '^Alias name: (.+)$') { $Matches[1] } })
+        if ($aliases.Count -ne 1) { throw 'Expected exactly one release signing identity; refusing to change an ambiguous keystore.' }
+        if ($aliases[0] -ne 'guvenlibaglanti') {
+            & $KeyTool '-J-Duser.language=en' '-J-Duser.country=US' -changealias -alias $aliases[0] -destalias guvenlibaglanti -keystore $keyFile -storetype PKCS12 -storepass:env GB_SIGNING_PASSWORD
+            if ($LASTEXITCODE -ne 0) { throw 'Could not normalize the existing key alias; the release key was not replaced.' }
+        }
+        & $KeyTool '-J-Duser.language=en' '-J-Duser.country=US' -list -keystore $keyFile -storetype PKCS12 -storepass:env GB_SIGNING_PASSWORD -alias guvenlibaglanti | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Expected release signing alias did not validate.' }
+    } finally {
+        Remove-Item Env:GB_SIGNING_PASSWORD -ErrorAction SilentlyContinue
+    }
     Send-GitHubValue 'secret' 'ANDROID_SIGNING_KEY' ([Convert]::ToBase64String([IO.File]::ReadAllBytes($keyFile)))
     Send-GitHubValue 'secret' 'ANDROID_KEY_STORE_PASSWORD' $password
     Send-GitHubValue 'secret' 'ANDROID_KEY_PASSWORD' $password

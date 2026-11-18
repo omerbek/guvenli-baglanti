@@ -136,6 +136,8 @@ jobs:
       - name: Build the role-specific Windows application
         shell: pwsh
         run: |
+          cargo build --locked --release -p dylib_virtual_display
+          if ($LASTEXITCODE -ne 0) { throw 'Virtual display support build failed.' }
           cargo build --locked --release --lib --features flutter,hwcodec
           if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
           Push-Location flutter
@@ -245,7 +247,7 @@ jobs:
           printf '%s' "$ANDROID_SIGNING_KEY" | base64 --decode > "$keyfile"
           trap 'rm -f "$keyfile" "$GITHUB_WORKSPACE/flutter/android/key.properties"' EXIT
           printf 'storeFile=%s\nstorePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreType=PKCS12\n' "$keyfile" "$ANDROID_KEY_STORE_PASSWORD" "$ANDROID_KEY_PASSWORD" "$ANDROID_ALIAS" > flutter/android/key.properties
-          keytool -list -keystore "$keyfile" -storetype PKCS12 -storepass:env ANDROID_KEY_STORE_PASSWORD -alias "$ANDROID_ALIAS" > /dev/null
+          keytool -list -keystore "$keyfile" -storetype PKCS12 -storepass:env ANDROID_KEY_STORE_PASSWORD -alias "$ANDROID_ALIAS"
           cd flutter
           flutter build apk --release --target-platform android-arm64 --split-per-abi --dart-define=PRIVATE_REMOTE_ROLE=controller --build-name=1.5.3 "--build-number=$GITHUB_RUN_NUMBER"
           cd ..

@@ -21,6 +21,8 @@ GitHub Actions'ta yalnızca elle tetiklenen **Guvenli Baglanti** iş akışı Wi
 
 Android release anahtarı `.github/scripts/provision-android-signing.ps1` ile yerel kullanıcıya özel dizinde oluşturulup GitHub'ın şifreli depo sırlarına yüklenir. Anahtar parolası yerelde Windows DPAPI ile korunur; bilgisayar/hesap değişikliğinden önce kurtarılabilir anahtar ve parola yedeği alınmalıdır. Debug imzaya dönüş yoktur.
 
+İmza betiği doğrulanmış GitHub CLI ve Java 17 `keytool` yollarını ister. PKCS12 içindeki anahtar takma adı Java ile doğrulanır; uyarlama mevcut anahtar ve sertifikayı değiştirmeden yapılır.
+
 Paketlerle SHA-256 özeti, kaynak commit bilgisi, lisans ve GitHub build provenance sağlanır. Windows Authenticode sertifikası dahil değildir; uygulama imzasızdır. SmartScreen/antivirüs korumasını kapatmayın. İndirilen paketin kaynağını `gh attestation verify <paket> --repo omerbek/guvenli-baglanti` ile ayrıca doğrulayın.
 
 Gerçek ev–işyeri bağlantısı, Windows servis/UAC davranışı ve mobil uyumluluk cihaz testleri gerektirir. Aşağıdaki bölüm orijinal RustDesk projesinin referansıdır; genel sunucu ve ek yetenek açıklamaları bu çatallama için geçerli değildir.
