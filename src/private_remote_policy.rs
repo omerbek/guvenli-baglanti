@@ -1,6 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 
 pub const DIRECT_PORT: u16 = 21118;
+pub const TAILSCALE_INTERFACE_DESCRIPTION: &str = "Tailscale Tunnel";
 pub const DESTINATION_ERROR: &str = "Only a literal Tailscale IP address on TCP port 21118 is allowed (100.64.0.0/10 or fd7a:115c:a1e0::/48); IDs, DNS names and relays are disabled";
 pub const SESSION_ERROR: &str = "Only remote desktop sessions are allowed; file transfer, tunnels, camera, terminal and switching sides are disabled";
 pub const SETUP_ERROR: &str = "Host is closed: set a new permanent password of at least 20 characters and configure authenticator 2FA in Security settings";
@@ -20,7 +21,7 @@ pub fn tailscale_ip(ip: IpAddr) -> bool {
 }
 
 pub fn tailscale_interface(description: Option<&str>) -> bool {
-    description.map_or(false, |value| value.eq_ignore_ascii_case("Tailscale Tunnel"))
+    description.map_or(false, |value| value.eq_ignore_ascii_case(TAILSCALE_INTERFACE_DESCRIPTION))
 }
 
 pub fn controller_interface(name: &str, description: Option<&str>, windows: bool, android: bool) -> bool {

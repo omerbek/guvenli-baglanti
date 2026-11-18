@@ -26,6 +26,44 @@ env:
   CARGO_NDK_VERSION: '3.1.2'
 
 jobs:
+  windows-network-check:
+    if: inputs.platform != 'android'
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Test and build the isolated Windows tunnel check
+        shell: pwsh
+        run: |
+          $manifest = 'tools/private_remote_tunnel_check/Cargo.toml'
+          $target = "$env:RUNNER_TEMP/private-tunnel-target"
+          cargo test --locked --release --manifest-path $manifest --target-dir $target
+          if ($LASTEXITCODE -ne 0) { throw 'Windows tunnel regression tests failed.' }
+          cargo build --locked --release --manifest-path $manifest --target-dir $target
+          if ($LASTEXITCODE -ne 0) { throw 'Windows tunnel check build failed.' }
+          New-Item -ItemType Directory -Path dist-tunnel-check | Out-Null
+          $exe = 'dist-tunnel-check/GuvenliBaglanti-tunnel-check.exe'
+          Copy-Item "$target/release/guvenli-baglanti-tunnel-check.exe" $exe
+          "$((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant())  GuvenliBaglanti-tunnel-check.exe" | Set-Content "$exe.sha256" -Encoding ascii
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        with:
+          subject-path: dist-tunnel-check/*.exe
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: GuvenliBaglanti-windows-tunnel-check
+          path: dist-tunnel-check/*
+          if-no-files-found: error
+          retention-days: 14
+
   bridge:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -80,7 +118,7 @@ jobs:
             flutter/lib/generated_bridge.freezed.dart
 
   windows:
-    needs: bridge
+    needs: [bridge, windows-network-check]
     if: inputs.platform != 'android'
     permissions:
       contents: read
@@ -105,6 +143,10 @@ jobs:
         with:
           name: private-bridge
           path: ./
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: GuvenliBaglanti-windows-tunnel-check
+          path: .private-tunnel-check
       - uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432c68818ab8f0
         with:
           version: '15.0.6'
@@ -146,6 +188,8 @@ jobs:
           Copy-Item 'target/release/deps/dylib_virtual_display.dll' $bundle
           if (!(Test-Path "$bundle/GuvenliBaglanti.exe")) { throw 'Application executable missing.' }
           Copy-Item LICENCE "$bundle/LICENCE.txt"
+          Copy-Item '.private-tunnel-check/GuvenliBaglanti-tunnel-check.exe' $bundle
+          Copy-Item '.private-tunnel-check/GuvenliBaglanti-tunnel-check.exe.sha256' $bundle
           @("Source: https://github.com/$env:GITHUB_REPOSITORY", "Commit: $env:GITHUB_SHA", "Role: $env:PRIVATE_REMOTE_ROLE", 'Based on RustDesk 1.5.3; AGPL-3.0.', 'Windows Authenticode certificate is not included; this build is unsigned.') | Set-Content "$bundle/BUILD-INFO.txt" -Encoding utf8
           New-Item -ItemType Directory -Path dist | Out-Null
           Compress-Archive "$bundle/*" "dist/GuvenliBaglanti-windows-$env:PRIVATE_REMOTE_ROLE.zip"

@@ -16,6 +16,8 @@ pub use self::server::*;
 mod client;
 pub mod private_remote_policy;
 pub mod private_remote;
+#[cfg(windows)]
+mod private_remote_windows;
 mod lan;
 #[cfg(not(any(target_os = "ios")))]
 mod rendezvous_mediator;

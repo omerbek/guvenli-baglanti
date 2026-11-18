@@ -114,15 +114,26 @@ pub fn controller_connection_is_private(local: std::net::IpAddr) -> bool {
     if !private_remote_policy::tailscale_ip(local) {
         return false;
     }
-    default_net::get_interfaces().iter().any(|interface| {
-        private_remote_policy::controller_interface(
-            &interface.name, interface.description.as_deref(),
-            cfg!(target_os = "windows"), cfg!(target_os = "android"),
-        ) && match local {
-            std::net::IpAddr::V4(ip) => interface.ipv4.iter().any(|network| network.addr == ip),
-            std::net::IpAddr::V6(ip) => interface.ipv6.iter().any(|network| network.addr == ip),
+    #[cfg(windows)]
+    {
+        let mut found = false;
+        if let Err(code) = crate::private_remote_windows::for_each_address(|ip| found |= ip == local) {
+            hbb_common::log::warn!("Cannot verify the Tailscale adapter: Windows error {code}");
+            return false;
         }
-    })
+        return found;
+    }
+    #[cfg(not(windows))]
+    {
+        default_net::get_interfaces().iter().any(|interface| {
+            private_remote_policy::controller_interface(
+                &interface.name, interface.description.as_deref(), false, cfg!(target_os = "android"),
+            ) && match local {
+                std::net::IpAddr::V4(ip) => interface.ipv4.iter().any(|network| network.addr == ip),
+                std::net::IpAddr::V6(ip) => interface.ipv6.iter().any(|network| network.addr == ip),
+            }
+        })
+    }
 }
 
 pub fn permission_allowed(key: &str) -> bool {
@@ -167,6 +178,15 @@ pub async fn run_host(server: crate::server::ServerPtr) {
         let enabled = host_ready() && !Config::get_bool_option("stop-service");
         addresses.clear();
         if enabled {
+            #[cfg(windows)]
+            if let Err(code) = crate::private_remote_windows::for_each_address(|ip| {
+                addresses.push(std::net::SocketAddr::new(ip, private_remote_policy::DIRECT_PORT));
+            }) {
+                addresses.clear();
+                hbb_common::throttled_log!(std::time::Duration::from_secs(30), warn,
+                    "Cannot enumerate the Tailscale adapter: Windows error {code}");
+            }
+            #[cfg(not(windows))]
             addresses.extend(default_net::get_interfaces().into_iter()
                 .filter(|interface| private_remote_policy::tailscale_interface(interface.description.as_deref()))
                 .flat_map(|interface| {
