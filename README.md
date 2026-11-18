@@ -5,6 +5,7 @@ RustDesk 1.5.3 tabanlı, yalnızca Tailscale üzerinden kişisel uzak masaüstü
 ## Kullanım ve güvenlik sınırları
 
 - Evdeki Windows bilgisayarında `host`, iş bilgisayarında `controller` paketi kullanılır. Android APK her zaman kontrol istemcisidir; HarmonyOS uyumluluğu gerçek cihazda denenmelidir.
+- Windows paketleri resmî Flutter motoru ve onunla eşleşen AOT araçlarıyla üretilir; Windows 7 için değiştirilmiş motor kullanılmaz.
 - Her iki cihazda Tailscale kurulmuş, oturum açılmış ve cihazlar onaylanmış olmalıdır. Hesapta tercihen geçiş anahtarı/donanım anahtarıyla MFA kullanın.
 - Host yalnızca Windows'taki `Tailscale Tunnel` bağdaştırıcısının Tailscale adreslerinde TCP 21118 dinler. Normal ağ arayüzünde aynı IP aralığının bulunması yeterli değildir.
 - Kontrol istemcisi, kimlik doğrulama verisi göndermeden önce yerel çıkış adresinin de gerçek tünel bağdaştırıcısına ait olduğunu denetler. Mobil operatörün CGNAT adres aralığı tek başına özel ağ kanıtı sayılmaz.

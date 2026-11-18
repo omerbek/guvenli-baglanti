@@ -2,12 +2,21 @@ name: Guvenli Baglanti
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform to build
+        type: choice
+        default: all
+        options:
+          - all
+          - windows
+          - android
 
 permissions:
   contents: read
 
 concurrency:
-  group: private-build-${{ github.ref }}
+  group: private-build-${{ github.ref }}-${{ inputs.platform || 'all' }}
   cancel-in-progress: false
 
 env:
@@ -72,6 +81,7 @@ jobs:
 
   windows:
     needs: bridge
+    if: inputs.platform != 'android'
     permissions:
       contents: read
       id-token: write
@@ -103,20 +113,8 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-      - name: Install the checksum-pinned upstream Windows engine
-        shell: pwsh
-        env:
-          FLUTTER_SDK: ${{ steps.flutter.outputs.CACHE-PATH }}
-        run: |
-          flutter precache --windows
-          $archive = Join-Path $env:RUNNER_TEMP 'windows-engine.zip'
-          Invoke-WebRequest 'https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip' -OutFile $archive
-          $expected = 'EC8CABF36EE4FF24C8D98DE25B00E70781EB03876265AEE84D0FE554A110036E'
-          if ((Get-FileHash $archive -Algorithm SHA256).Hash -cne $expected) { throw 'Upstream engine checksum changed; refusing execution.' }
-          $expanded = Join-Path $env:RUNNER_TEMP 'windows-engine'
-          Expand-Archive $archive $expanded
-          $engine = Join-Path $env:FLUTTER_SDK 'bin/cache/artifacts/engine/windows-x64-release'
-          Copy-Item "$expanded/*" $engine -Recurse -Force
+      - name: Prepare the official Windows engine and matching AOT tools
+        run: flutter precache --windows
       - name: Apply the upstream Flutter compatibility patch
         shell: bash
         env:
@@ -170,6 +168,7 @@ jobs:
 
   android:
     needs: bridge
+    if: inputs.platform != 'windows'
     permissions:
       contents: read
       id-token: write
