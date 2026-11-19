@@ -35,6 +35,8 @@ Windows kontrol istemcisinin `00395cdd9f` derlemesinde açılışı ve Tailscale
 
 Paketlere eklenen `GuvenliBaglanti-tunnel-check.exe` yalnızca atanmış Tailscale adreslerini yazdırır; host veya dinleyici başlatmaz. Bağımsız derlenen bu araç IPv4/IPv6 ve yanlış arayüz reddi regresyon testlerinden geçti; aynı kaynak, gerçek Windows Tailscale tünelinin iki adresini de buldu. Bu doğrulama gerçek uzak masaüstü oturumunun yerine geçmez.
 
+`a0d06252b0` Windows host ve kontrol ZIP paketlerinin SHA-256 ve kaynak-bağlı GitHub provenance doğrulaması geçti. Kontrol paketindeki tünel aracı gerçek atanmış iki Tailscale adresini buldu; yeni kontrol uygulaması gerçek arayüzde açıldı ve kontrol sırasında loopback dışı TCP/UDP dinleyicisi görülmedi. Ev hostunun güncellenmesi ve gerçek oturum testi hâlâ gereklidir.
+
 Android ARM64 APK'sı `1613dd1b21` derlemesinde release imzası ve beklenen sertifika ile CI'da doğrulandı; indirilen APK'nın SHA-256 ve GitHub provenance kontrolleri de geçti. Android/HarmonyOS cihaz testi yapılmadı.
 
 Gerçek ev–işyeri bağlantısı, Windows servis/UAC davranışı ve mobil uyumluluk cihaz testleri gerektirir. Aşağıdaki bölüm orijinal RustDesk projesinin referansıdır; genel sunucu ve ek yetenek açıklamaları bu çatallama için geçerli değildir.
